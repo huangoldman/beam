@@ -19,6 +19,7 @@ package org.apache.beam.sdk.io.gcp.spanner;
 
 import com.google.auto.value.AutoValue;
 import com.google.cloud.spanner.Type;
+import com.google.common.base.Objects;
 import com.google.common.collect.ArrayListMultimap;
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -110,13 +111,13 @@ class SpannerSchema implements Serializable {
 
     private static Type parseSpannerType(String spannerType) {
       spannerType = spannerType.toUpperCase();
-      if (spannerType.equals("BOOL")) {
+      if ("BOOL".equals(spannerType)) {
         return Type.bool();
       }
-      if (spannerType.equals("INT64")) {
+      if ("INT64".equals(spannerType)) {
         return Type.int64();
       }
-      if (spannerType.equals("FLOAT64")) {
+      if ("FLOAT64".equals(spannerType)) {
         return Type.float64();
       }
       if (spannerType.startsWith("STRING")) {
@@ -125,10 +126,10 @@ class SpannerSchema implements Serializable {
       if (spannerType.startsWith("BYTES")) {
         return Type.bytes();
       }
-      if (spannerType.equals("TIMESTAMP")) {
+      if ("TIMESTAMP".equals(spannerType)) {
         return Type.timestamp();
       }
-      if (spannerType.equals("DATE")) {
+      if ("DATE".equals(spannerType)) {
         return Type.date();
       }
 
@@ -140,5 +141,23 @@ class SpannerSchema implements Serializable {
       }
       throw new IllegalArgumentException("Unknown spanner type " + spannerType);
     }
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    SpannerSchema that = (SpannerSchema) o;
+    return Objects.equal(tables, that.tables) && Objects.equal(columns, that.columns) && Objects
+        .equal(keyParts, that.keyParts);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hashCode(tables, columns, keyParts);
   }
 }

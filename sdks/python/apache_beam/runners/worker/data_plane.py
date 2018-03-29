@@ -29,10 +29,12 @@ import sys
 import threading
 
 import grpc
+import six
 
 from apache_beam.coders import coder_impl
 from apache_beam.portability.api import beam_fn_api_pb2
 from apache_beam.portability.api import beam_fn_api_pb2_grpc
+from apache_beam.runners.worker.worker_id_interceptor import WorkerIdInterceptor
 
 # This module is experimental. No backwards-compatibility guarantees.
 
@@ -182,7 +184,8 @@ class _GrpcDataChannel(DataChannel):
           data = received.get(timeout=1)
         except queue.Empty:
           if self._exc_info:
-            raise self.exc_info[0], self.exc_info[1], self.exc_info[2]
+            t, v, tb = self._exc_info
+            six.reraise(t, v, tb)
         else:
           if not data.data and data.target in expected_targets:
             done_targets.append(data.target)
@@ -309,6 +312,9 @@ class GrpcClientDataChannelFactory(DataChannelFactory):
               # controlled in a layer above.
               options=[("grpc.max_receive_message_length", -1),
                        ("grpc.max_send_message_length", -1)])
+          # Add workerId to the grpc channel
+          grpc_channel = grpc.intercept_channel(grpc_channel,
+                                                WorkerIdInterceptor())
           self._data_channel_cache[url] = GrpcClientDataChannel(
               beam_fn_api_pb2_grpc.BeamFnDataStub(grpc_channel))
     return self._data_channel_cache[url]

@@ -33,7 +33,10 @@ import static org.apache.beam.sdk.extensions.sql.SqlTypeCoder.SqlVarCharCoder;
 
 import com.google.common.collect.ImmutableSet;
 import java.util.Set;
+import org.apache.beam.sdk.extensions.sql.SqlTypeCoder.SqlArrayCoder;
 import org.apache.beam.sdk.extensions.sql.SqlTypeCoder.SqlIntegerCoder;
+import org.apache.beam.sdk.extensions.sql.SqlTypeCoder.SqlRowCoder;
+import org.apache.beam.sdk.values.RowType;
 
 /**
  * Coders for SQL types supported in Beam.
@@ -64,4 +67,24 @@ public class SqlTypeCoders {
           SqlTypeCoders.FLOAT,
           SqlTypeCoders.DOUBLE,
           SqlTypeCoders.DECIMAL);
+
+  public static SqlTypeCoder arrayOf(SqlTypeCoder elementCoder) {
+    return SqlArrayCoder.of(elementCoder);
+  }
+
+  public static SqlTypeCoder arrayOf(RowType rowType) {
+    return SqlArrayCoder.of(rowOf(rowType));
+  }
+
+  public static boolean isArray(SqlTypeCoder sqlTypeCoder) {
+    return sqlTypeCoder instanceof SqlArrayCoder;
+  }
+
+  public static boolean isRow(SqlTypeCoder sqlTypeCoder) {
+    return sqlTypeCoder instanceof SqlRowCoder;
+  }
+
+  public static SqlTypeCoder rowOf(RowType rowType) {
+    return SqlRowCoder.of(rowType);
+  }
 }

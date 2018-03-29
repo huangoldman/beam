@@ -146,6 +146,8 @@ class GcsIOError(IOError, retry.PermanentException):
 class GcsIO(object):
   """Google Cloud Storage I/O client."""
 
+  local_state = threading.local()
+
   def __new__(cls, storage_client=None):
     if storage_client:
       # This path is only used for testing.
@@ -155,7 +157,7 @@ class GcsIO(object):
       # creating more than one storage client for each thread, since each
       # initialization requires the relatively expensive step of initializing
       # credentaials.
-      local_state = threading.local()
+      local_state = GcsIO.local_state
       if getattr(local_state, 'gcsio_instance', None) is None:
         credentials = auth.get_service_credentials()
         storage_client = storage.StorageV1(
@@ -309,15 +311,7 @@ class GcsIO(object):
         sourceObject=src_path,
         destinationBucket=dest_bucket,
         destinationObject=dest_path)
-    try:
-      self.client.objects.Copy(request)
-    except HttpError as http_error:
-      if http_error.status_code == 404:
-        # This is a permanent error that should not be retried. Note that
-        # FileBasedSink.finalize_write expects an IOError when the source
-        # file does not exist.
-        raise GcsIOError(errno.ENOENT, 'Source file not found: %s' % src)
-      raise
+    self.client.objects.Copy(request)
 
   # We intentionally do not decorate this method with a retry, as retrying is
   # handled in BatchApiRequest.Execute().
@@ -410,6 +404,19 @@ class GcsIO(object):
       else:
         # We re-raise all other exceptions
         raise
+
+  @retry.with_exponential_backoff(
+      retry_filter=retry.retry_on_server_errors_and_timeout_filter)
+  def checksum(self, path):
+    """Looks up the checksum of a GCS object.
+
+    Args:
+      path: GCS file path pattern in the form gs://<bucket>/<name>.
+    """
+    bucket, object_path = parse_gcs_path(path)
+    request = storage.StorageObjectsGetRequest(
+        bucket=bucket, object=object_path)
+    return self.client.objects.Get(request).crc32c
 
   @retry.with_exponential_backoff(
       retry_filter=retry.retry_on_server_errors_and_timeout_filter)
@@ -516,7 +523,6 @@ class GcsUploader(Uploader):
     self._path = path
     self._bucket, self._name = parse_gcs_path(path)
     self._mime_type = mime_type
-    self._last_error = None
 
     # Set up communication with child thread.
     parent_conn, child_conn = multiprocessing.Pipe()

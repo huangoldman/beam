@@ -134,17 +134,19 @@ import org.slf4j.LoggerFactory;
  * into a custom type using a specified parse function, and by {@link #readTableRows} which parses
  * them into {@link TableRow}, which may be more convenient but has lower performance.
  *
- * <p>Both functions support reading either from a table or from the result of a query, via
- * {@link TypedRead#from(String)} and {@link TypedRead#fromQuery} respectively. Exactly one
- * of these must be specified.
+ * <p>Both functions support reading either from a table or from the result of a query, via {@link
+ * TypedRead#from(String)} and {@link TypedRead#fromQuery} respectively. Exactly one of these must
+ * be specified.
  *
- * <b>Example: Reading rows of a table as {@link TableRow}.</b>
+ * <p><b>Example: Reading rows of a table as {@link TableRow}.</b>
+ *
  * <pre>{@code
  * PCollection<TableRow> weatherData = pipeline.apply(
  *     BigQueryIO.readTableRows().from("clouddataflow-readonly:samples.weather_stations"));
  * }</pre>
  *
  * <b>Example: Reading rows of a table and parsing them into a custom type.</b>
+ *
  * <pre>{@code
  * PCollection<WeatherRecord> weatherData = pipeline.apply(
  *    BigQueryIO
@@ -157,11 +159,12 @@ import org.slf4j.LoggerFactory;
  *      .withCoder(SerializableCoder.of(WeatherRecord.class));
  * }</pre>
  *
- * <p>Note: When using {@link #read(SerializableFunction)}, you may sometimes need to use
- * {@link TypedRead#withCoder(Coder)} to specify a {@link Coder} for the result type, if Beam
- * fails to infer it automatically.
+ * <p>Note: When using {@link #read(SerializableFunction)}, you may sometimes need to use {@link
+ * TypedRead#withCoder(Coder)} to specify a {@link Coder} for the result type, if Beam fails to
+ * infer it automatically.
  *
- * <b>Example: Reading results of a query as {@link TableRow}.</b>
+ * <p><b>Example: Reading results of a query as {@link TableRow}.</b>
+ *
  * <pre>{@code
  * PCollection<TableRow> meanTemperatureData = pipeline.apply(BigQueryIO.readTableRows()
  *     .fromQuery("SELECT year, mean_temp FROM [samples.weather_stations]"));
@@ -169,23 +172,28 @@ import org.slf4j.LoggerFactory;
  *
  * <h3>Writing</h3>
  *
- * <p>To write to a BigQuery table, apply a {@link BigQueryIO.Write} transformation. This consumes
- * either a {@link PCollection} of {@link TableRow TableRows} as input when using {@link
- * BigQueryIO#writeTableRows()} or of a user-defined type when using {@link BigQueryIO#write()}.
- * When using a user-defined type, a function must be provided to turn this type into a {@link
- * TableRow} using {@link BigQueryIO.Write#withFormatFunction(SerializableFunction)}.
+ * <p>To write to a BigQuery table, apply a {@link BigQueryIO.Write} transformation. This consumes a
+ * {@link PCollection} of a user-defined type when using {@link BigQueryIO#write()} (recommended),
+ * or a {@link PCollection} of {@link TableRow TableRows} as input when using {@link
+ * BigQueryIO#writeTableRows()} (not recommended). When using a user-defined type, a function must
+ * be provided to turn this type into a {@link TableRow} using {@link
+ * BigQueryIO.Write#withFormatFunction(SerializableFunction)}.
  *
  * <pre>{@code
- * PCollection<TableRow> quotes = ...
+ * class Quote { Instant timestamp; String exchange; String symbol; double price; }
  *
- * List<TableFieldSchema> fields = new ArrayList<>();
- * fields.add(new TableFieldSchema().setName("source").setType("STRING"));
- * fields.add(new TableFieldSchema().setName("quote").setType("STRING"));
- * TableSchema schema = new TableSchema().setFields(fields);
+ * PCollection<Quote> quotes = ...
  *
- * quotes.apply(BigQueryIO.writeTableRows()
- *     .to("my-project:output.output_table")
- *     .withSchema(schema)
+ * quotes.apply(BigQueryIO
+ *     .<Quote>write()
+ *     .to("my-project:my_dataset.my_table")
+ *     .withSchema(new TableSchema().setFields(
+ *         ImmutableList.of(
+ *           new TableFieldSchema().setName("timestamp").setType("TIMESTAMP"),
+ *           new TableFieldSchema().setName("exchange").setType("STRING"),
+ *           new TableFieldSchema().setName("symbol").setType("STRING"),
+ *           new TableFieldSchema().setName("price").setType("FLOAT"))))
+ *     .withFormatFunction(quote -> new TableRow().set(..set the columns..))
  *     .withWriteDisposition(BigQueryIO.Write.WriteDisposition.WRITE_TRUNCATE));
  * }</pre>
  *
@@ -194,38 +202,47 @@ import org.slf4j.LoggerFactory;
  * written to must already exist. Unbounded PCollections can only be written using {@link
  * Write.WriteDisposition#WRITE_EMPTY} or {@link Write.WriteDisposition#WRITE_APPEND}.
  *
- * <h3>Sharding BigQuery output tables</h3>
+ * <h3>Loading historical data into time-partitioned BigQuery tables</h3>
  *
- * <p>A common use case is to dynamically generate BigQuery table names based on the current window
- * or the current value. To support this, {@link BigQueryIO.Write#to(SerializableFunction)} accepts
- * a function mapping the current element to a tablespec. For example, here's code that outputs
- * daily tables to BigQuery:
+ * <p>To load historical data into a time-partitioned BigQuery table, specify {@link
+ * BigQueryIO.Write#withTimePartitioning} with a {@link TimePartitioning#setField(String) field}
+ * used for <a
+ * href="https://cloud.google.com/bigquery/docs/partitioned-tables#partitioned_tables">column-based
+ * partitioning</a>. For example:
  *
  * <pre>{@code
- * PCollection<TableRow> quotes = ...
- * quotes.apply(Window.<TableRow>into(CalendarWindows.days(1)))
- *       .apply(BigQueryIO.writeTableRows()
+ * PCollection<Quote> quotes = ...;
+ *
+ * quotes.apply(BigQueryIO.write()
  *         .withSchema(schema)
- *         .to(new SerializableFunction<ValueInSingleWindow<TableRow>, TableDestination>() {
- *           public TableDestination apply(ValueInSingleWindow<TableRow> value) {
- *             // The cast below is safe because CalendarWindows.days(1) produces IntervalWindows.
- *             String dayString = DateTimeFormat.forPattern("yyyy_MM_dd")
- *                  .withZone(DateTimeZone.UTC)
- *                  .print(((IntervalWindow) value.getWindow()).start());
- *             return new TableDestination(
- *                 "my-project:output.output_table_" + dayString, // Table spec
- *                 "Output for day " + dayString // Table description
- *               );
- *           }
- *         }));
+ *         .withFormatFunction(quote -> new TableRow()
+ *            .set("timestamp", quote.getTimestamp())
+ *            .set(..other columns..))
+ *         .to("my-project:my_dataset.my_table")
+ *         .withTimePartitioning(new TimePartitioning().setField("time")));
  * }</pre>
  *
- * <p>Note that this also allows the table to be a function of the element as well as the current
- * pane, in the case of triggered windows. In this case it might be convenient to call {@link
- * BigQueryIO#write()} directly instead of using the {@link BigQueryIO#writeTableRows()} helper.
- * This will allow the mapping function to access the element of the user-defined type. In this
- * case, a formatting function must be specified using {@link BigQueryIO.Write#withFormatFunction}
- * to convert each element into a {@link TableRow} object.
+ * <h3>Writing different values to different tables</h3>
+ *
+ * <p>A common use case is to dynamically generate BigQuery table names based on the current value.
+ * To support this, {@link BigQueryIO.Write#to(SerializableFunction)} accepts a function mapping the
+ * current element to a tablespec. For example, here's code that outputs quotes of different stocks
+ * to different tables:
+ *
+ * <pre>{@code
+ * PCollection<Quote> quotes = ...;
+ *
+ * quotes.apply(BigQueryIO.write()
+ *         .withSchema(schema)
+ *         .withFormatFunction(quote -> new TableRow()...)
+ *         .to((ValueInSingleWindow<Quote> quote) -> {
+ *             String symbol = quote.getSymbol();
+ *             return new TableDestination(
+ *                 "my-project:my_dataset.quotes_" + symbol, // Table spec
+ *                 "Quotes of stock " + symbol // Table description
+ *               );
+ *           });
+ * }</pre>
  *
  * <p>Per-table schemas can also be provided using {@link BigQueryIO.Write#withSchemaFromView}. This
  * allows you the schemas to be calculated based on a previous pipeline stage or statically via a
@@ -261,9 +278,9 @@ import org.slf4j.LoggerFactory;
  * loads involves writing temporary files to this location, so the location must be accessible at
  * pipeline execution time. By default, this location is captured at pipeline <i>construction</i>
  * time, may be inaccessible if the template may be reused from a different project or at a moment
- * when the original location no longer exists.
- * {@link Write#withCustomGcsTempLocation(ValueProvider)} allows specifying the location as an
- * argument to the template invocation.
+ * when the original location no longer exists. {@link
+ * Write#withCustomGcsTempLocation(ValueProvider)} allows specifying the location as an argument to
+ * the template invocation.
  *
  * <h3>Permissions</h3>
  *
@@ -347,10 +364,12 @@ public class BigQueryIO {
    * sample parse function that parses click events from a table.
    *
    * <pre>{@code
+   * class ClickEvent { long userId; String url; ... }
+   *
    * p.apply(BigQueryIO.read(new SerializableFunction<SchemaAndRecord, ClickEvent>() {
-   *   public Event apply(SchemaAndRecord record) {
+   *   public ClickEvent apply(SchemaAndRecord record) {
    *     GenericRecord r = record.getRecord();
-   *     return new Event((Long) r.get("userId"), (String) r.get("url"));
+   *     return new ClickEvent((Long) r.get("userId"), (String) r.get("url"));
    *   }
    * }).from("...");
    * }</pre>
@@ -529,6 +548,7 @@ public class BigQueryIO {
       abstract Builder<T> setUseLegacySql(Boolean useLegacySql);
       abstract Builder<T> setWithTemplateCompatibility(Boolean useTemplateCompatibility);
       abstract Builder<T> setBigQueryServices(BigQueryServices bigQueryServices);
+      abstract Builder<T> setQueryPriority(QueryPriority priority);
       abstract TypedRead<T> build();
 
       abstract Builder<T> setParseFn(
@@ -548,7 +568,35 @@ public class BigQueryIO {
 
     abstract SerializableFunction<SchemaAndRecord, T> getParseFn();
 
+    @Nullable abstract QueryPriority getQueryPriority();
+
     @Nullable abstract Coder<T> getCoder();
+
+    /**
+    * An enumeration type for the priority of a query.
+    *
+    * @see
+    * <a href="https://cloud.google.com/bigquery/docs/running-queries">
+    *     Running Interactive and Batch Queries in the BigQuery documentation</a>
+    */
+    public enum QueryPriority {
+        /**
+        * Specifies that a query should be run with an INTERACTIVE priority.
+        *
+        * <p>Interactive mode allows for BigQuery to execute the query as soon as possible. These
+        * queries count towards your concurrent rate limit and your daily limit.
+        */
+        INTERACTIVE,
+
+        /**
+        * Specifies that a query should be run with a BATCH priority.
+        *
+        * <p>Batch mode queries are queued by BigQuery.  These are started as soon as idle
+        * resources are available, usually within a few minutes. Batch queries don’t count
+        * towards your concurrent rate limit.
+        */
+        BATCH
+    }
 
     @VisibleForTesting
     Coder<T> inferCoder(CoderRegistry coderRegistry) {
@@ -583,7 +631,8 @@ public class BigQueryIO {
                 getUseLegacySql(),
                 getBigQueryServices(),
                 coder,
-                getParseFn());
+                getParseFn(),
+                MoreObjects.firstNonNull(getQueryPriority(), QueryPriority.BATCH));
       }
       return source;
     }
@@ -653,6 +702,9 @@ public class BigQueryIO {
 
       if (table != null) {
         checkArgument(getQuery() == null, "from() and fromQuery() are exclusive");
+        checkArgument(
+            getQueryPriority() == null,
+            "withQueryPriority() can only be specified when using fromQuery()");
         checkArgument(
             getFlattenResults() == null,
             "Invalid BigQueryIO.Read: Specifies a table with a result flattening"
@@ -882,7 +934,11 @@ public class BigQueryIO {
       return toBuilder().setUseLegacySql(false).build();
     }
 
-    /** See {@link Read#withTemplateCompatibility()}. */
+    /** See {@link QueryPriority}. */
+    public TypedRead<T> withQueryPriority(QueryPriority priority) {
+      return toBuilder().setQueryPriority(priority).build();
+    }
+
     @Experimental(Experimental.Kind.SOURCE_SINK)
     public TypedRead<T> withTemplateCompatibility() {
       return toBuilder().setWithTemplateCompatibility(true).build();
@@ -903,7 +959,7 @@ public class BigQueryIO {
     JobStatistics jobStats = extractJob.getStatistics();
     List<Long> counts = jobStats.getExtract().getDestinationUriFileCounts();
     if (counts.size() != 1) {
-      String errorMessage = (counts.size() == 0
+      String errorMessage = (counts.isEmpty()
               ? "No destination uri file count received."
               : String.format(
                   "More than one destination uri file count received. First two are %s, %s",
@@ -971,6 +1027,9 @@ public class BigQueryIO {
   /**
    * A {@link PTransform} that writes a {@link PCollection} containing {@link TableRow TableRows} to
    * a BigQuery table.
+   *
+   * <p>It is recommended to instead use {@link #write} with {@link
+   * Write#withFormatFunction(SerializableFunction)}.
    */
   public static Write<TableRow> writeTableRows() {
     return BigQueryIO.<TableRow>write().withFormatFunction(IDENTITY_FORMATTER);
@@ -1312,7 +1371,7 @@ public class BigQueryIO {
      * Choose the frequency at which file writes are triggered.
      *
      * <p>This is only applicable when the write method is set to {@link Method#FILE_LOADS}, and
-     * only when writing a bounded {@link PCollection}.
+     * only when writing an unbounded {@link PCollection}.
      *
      * <p>Every triggeringFrequency duration, a BigQuery load job will be generated for all the data
      * written since the last load job. BigQuery has limits on how many load jobs can be triggered

@@ -38,7 +38,7 @@ println "Applying build_rules.gradle to $project.name"
 // We use the project.path as the group name to make this mapping unique since
 // we have a few projects with the same name.
 group = project.path
-version = "2.3.0-SNAPSHOT"
+version = "2.5.0-SNAPSHOT"
 
 // Define the default set of repositories for all builds.
 repositories {
@@ -56,6 +56,9 @@ repositories {
   mavenLocal()
   mavenCentral()
   jcenter()
+
+  // Spring for resolving pentaho dependency.
+  maven { url "https://repo.spring.io/plugins-release/" }
 
   // Release staging repository
   maven { url "https://oss.sonatype.org/content/repositories/staging/" }
@@ -126,6 +129,7 @@ class JavaNatureConfiguration {
   double javaVersion = 1.8        // Controls the JDK source language and target compatibility
   boolean enableFindbugs = true   // Controls whether the findbugs plugin is enabled and configured
   boolean enableShadow = true     // Controls whether the shadow plugin is enabled and configured
+  String artifactId = null        // Sets the maven publication artifact id
 }
 
 // Configures a project with a default set of plugins that should apply to all Java projects.
@@ -177,8 +181,17 @@ ext.applyJavaNature = {
   println "applyJavaNature with " + (it ? "$it" : "default configuration") + " for project $project.name"
   // Use the implicit it parameter of the closure to handle zero argument or one argument map calls.
   JavaNatureConfiguration configuration = it ? it as JavaNatureConfiguration : new JavaNatureConfiguration()
-  apply plugin: "maven"
+  apply plugin: "maven-publish"
   apply plugin: "java"
+
+  publishing {
+    repositories {
+      maven {
+        url project.properties["distMgmtSnapshotsUrl"] ?: "https://repository.apache.org/content/repositories/snapshots"
+      }
+    }
+  }
+
 
   // Configure the Java compiler source language and target compatibility levels. Also ensure that
   // we configure the Java compiler to use UTF-8.
@@ -218,7 +231,7 @@ ext.applyJavaNature = {
     // Note that these plugins specifically use the compileOnly and testCompileOnly
     // configurations because they are never required to be shaded or become a
     // dependency of the output.
-    def auto_value = "com.google.auto.value:auto-value:1.5.1"
+    def auto_value = "com.google.auto.value:auto-value:1.5.3"
     def auto_service = "com.google.auto.service:auto-service:1.0-rc2"
 
     compileOnly auto_value
@@ -261,15 +274,6 @@ ext.applyJavaNature = {
   // Enables a plugin which can apply code formatting to source.
   // TODO: Should this plugin be enabled for all projects?
   apply plugin: "com.diffplug.gradle.spotless"
-  spotless {
-    java {
-      target rootProject.fileTree(rootProject.rootDir) {
-        include 'sdks/java/**/*.java'
-      }
-      // Code formatting disabled because style rules are out of date.
-      // eclipse().configFile(rootProject.file('sdks/java/build-tools/src/main/resources/beam/beam-codestyle.xml'))
-    }
-  }
 
   // Enables a plugin which performs code analysis for common bugs.
   // This plugin is configured to only analyze the "main" source set.
@@ -329,6 +333,52 @@ ext.applyJavaNature = {
     // Ensure that shaded classes are part of the artifact set.
     artifacts.archives shadowJar
 
+    if (configuration.artifactId) {
+      task sourcesJar(type: Jar) {
+        from sourceSets.main.allSource
+        classifier = 'sources'
+      }
+      task testSourcesJar(type: Jar) {
+        from sourceSets.test.allSource
+        classifier = 'test-sources'
+      }
+      task javadocJar(type: Jar, dependsOn: javadoc) {
+        classifier = 'javadoc'
+        from javadoc.destinationDir
+      }
+
+      // If a publication artifact id is supplied, publish the shadow jar.
+      publishing {
+        publications {
+          mavenJava(MavenPublication) {
+            artifact(shadowJar) {
+              groupId "org.apache.beam"
+              artifactId configuration.artifactId
+              // Strip the "shaded" classifier.
+              classifier null
+              // Set readable name to project description.
+              pom.withXml {
+                asNode().appendNode('name', description)
+              }
+            }
+            // TODO: Use the shadow test jar here instead of the test jar.
+            artifact packageTests {
+              classifier "tests"
+            }
+            artifact sourcesJar {
+              classifier "sources"
+            }
+            artifact testSourcesJar {
+              classifier "test-sources"
+            }
+            artifact javadocJar {
+              classifier "javadoc"
+            }
+          }
+        }
+      }
+    }
+
     // TODO: Figure out how to create ShadowJar task for ShadowTestJar here
     // that is extendable within each sub-project with any additional includes.
     // This could mirror the "shadowJar" configuration block.
@@ -367,15 +417,31 @@ ext.applyJavaNature = {
     }
   }
 
-  def aptGeneratedMain = "${project.buildDir}/generated/source/apt/main"
-  def aptGeneratedTest = "${project.buildDir}/generated/source/apt/test"
+  // These directories for when build actions are delegated to Gradle
+  def gradleAptGeneratedMain = "${project.buildDir}/generated/source/apt/main"
+  def gradleAptGeneratedTest = "${project.buildDir}/generated/source/apt/test"
+
+  // These directories for when build actions are executed by Idea
+  // IntelliJ does not add these source roots (that it owns!) unless hinted
+  def ideaRoot = "${project.projectDir}/out"
+  def ideaAptGeneratedMain = "${ideaRoot}/production/classes/generated"
+  def ideaAptGeneratedTest = "${ideaRoot}/test/classes/generated_test"
+
   idea {
     module {
-      sourceDirs += file(aptGeneratedMain)
-      generatedSourceDirs += file(aptGeneratedMain)
+      sourceDirs += file(gradleAptGeneratedMain)
+      testSourceDirs += file(gradleAptGeneratedTest)
 
-      testSourceDirs += file(aptGeneratedTest)
-      generatedSourceDirs += file(aptGeneratedTest)
+      sourceDirs += file(ideaAptGeneratedMain)
+      testSourceDirs += file(ideaAptGeneratedTest)
+
+      generatedSourceDirs += [
+        file(gradleAptGeneratedMain),
+        file(gradleAptGeneratedTest),
+        file(ideaAptGeneratedMain),
+        file(ideaAptGeneratedTest)
+      ]
+
     }
   }
 }
@@ -395,32 +461,9 @@ ext.applyGoNature = {
       root 'git.apache.org/thrift.git'
       emptyDir()
     }
-  }
-
-  // GoGradle fails in a parallel build during dependency resolution/installation.
-  // Force a dependency between all GoGradle projects during dependency resolution/installation.
-  // TODO: Figure out how to do this by automatically figuring out the task dependency DAG
-  // based upon task type.
-  List<String> goProjects = [
-      ":sdks:go",
-      ":runners:gcp:gcemd",
-      ":runners:gcp:gcsproxy",
-      ":sdks:python:container",
-      ":sdks:java:container",
-  ]
-  if (!goProjects.contains(project.path)) {
-    throw new GradleException(project.path + " has not been defined within the list of well known go projects within build_rules.gradle.")
-  }
-  int index = goProjects.indexOf(project.path)
-  if (index != 0) {
-    String previous = goProjects.get(index - 1)
-    println "Forcing: '" + previous + "' to be evaulated before '" + project.path + "'"
-    evaluationDependsOn(previous)
-    afterEvaluate {
-      println "Forcing: '" + project.path + ":resolveBuildDependencies' must run after '" + previous + ":installDependencies'"
-      tasks.getByPath(project.path + ":resolveBuildDependencies").mustRunAfter tasks.getByPath(previous + ":installDependencies")
-      println "Forcing: '" + project.path + ":resolveTestDependencies' must run after '" + previous + ":installDependencies'"
-      tasks.getByPath(project.path + ":resolveTestDependencies").mustRunAfter tasks.getByPath(previous + ":installDependencies")
+    golang {
+      root 'github.com/apache/thrift'
+      emptyDir()
     }
   }
 
@@ -444,6 +487,41 @@ ext.applyDockerNature = {
   docker {
     noCache true
   }
+}
+
+// A class defining the set of configurable properties accepted by containerImageName.
+class ContainerImageNameConfiguration {
+  String root = null // Sets the docker repository root (optional).
+  String name = null // Sets the short container image name, such as "go" (required).
+  String tag  = null // Sets the image tag (optional).
+}
+
+// containerImageName returns a configurable container image name, by default a
+// development image at bintray.io (see sdks/CONTAINERS.md):
+//
+//     $USER-docker-apache.bintray.io/beam/$NAME:latest
+//
+// Both the root and tag can be defined using properties or explicitly provided.
+ext.containerImageName = {
+  println "containerImageName with " + (it ? "$it" : "default configuration") + " for project $project.name"
+  // Use the implicit it parameter of the closure to handle zero argument or one argument map calls.
+  ContainerImageNameConfiguration configuration = it ? it as ContainerImageNameConfiguration : new ContainerImageNameConfiguration()
+
+  if (configuration.root == null) {
+    if (rootProject.hasProperty(["docker-repository-root"])) {
+      configuration.root = rootProject["docker-repository-root"]
+    } else {
+      configuration.root = "${System.properties["user.name"]}-docker-apache.bintray.io/beam"
+    }
+  }
+  if (configuration.tag == null) {
+    if (rootProject.hasProperty(["docker-tag"])) {
+      configuration.tag = rootProject["docker-tag"]
+    } else {
+      configuration.tag = 'latest'
+    }
+  }
+  return "${configuration.root}/${configuration.name}:${configuration.tag}"
 }
 
 /*************************************************************************************************/
@@ -490,7 +568,7 @@ ext.applyGrpcNature = {
       testSourceDirs += file(generatedProtoTestJavaDir)
       generatedSourceDirs += file(generatedProtoTestJavaDir)
 
-      sourceDirs += file(generatedProtoMainJavaDir)
+      sourceDirs += file(generatedGrpcMainJavaDir)
       generatedSourceDirs += file(generatedGrpcMainJavaDir)
 
       testSourceDirs += file(generatedGrpcTestJavaDir)
@@ -506,4 +584,42 @@ ext.applyGrpcNature = {
 ext.applyAvroNature = {
   println "applyAvroNature with " + (it ? "$it" : "default configuration") + " for project $project.name"
   apply plugin: "com.commercehub.gradle.plugin.avro"
+}
+
+// A class defining the set of configurable properties for createJavaQuickstartValidationTask
+class JavaQuickstartConfiguration {
+  // Name for the quickstart is required.
+  // Used both for the test name runQuickstartJava${name}
+  // and also for the script name, quickstart-java-${name}.toLowerCase().
+  String name
+
+  // gcpProject sets the gcpProject argument when executing the quickstart.
+  String gcpProject
+
+  // gcsBucket sets the gcsProject argument when executing the quickstart.
+  String gcsBucket
+}
+
+// Creates a task to run the quickstart for a runner.
+// Releases version and URL, can be overriden for a RC release with
+// ./gradlew :release:runQuickstartJava -Pver=2.3.0 -Prepourl=https://repository.apache.org/content/repositories/orgapachebeam-1027
+ext.createJavaQuickstartValidationTask = {
+  JavaQuickstartConfiguration config = it as JavaQuickstartConfiguration
+  def taskName = "runQuickstartJava${config.name}"
+  println "Generating :${taskName}"
+  def releaseVersion = project.findProperty('ver') ?: version
+  def releaseRepo = project.findProperty('repourl') ?: 'https://repository.apache.org/content/repositories/snapshots'
+  def argsNeeded = ["--ver=${releaseVersion}", "--repourl=${releaseRepo}"]
+  if (config.gcpProject) {
+    argsNeeded.add("--gcpProject=${config.gcpProject}")
+  }
+  if (config.gcsBucket) {
+    argsNeeded.add("--gcsBucket=${config.gcsBucket}")
+  }
+  project.evaluationDependsOn(':release')
+  task "${taskName}" (dependsOn: ':release:classes', type: JavaExec) {
+    main = "quickstart-java-${config.name}".toLowerCase()
+    classpath = project(':release').sourceSets.main.runtimeClasspath
+    args argsNeeded
+  }
 }

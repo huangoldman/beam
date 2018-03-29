@@ -28,9 +28,9 @@ import org.apache.beam.sdk.extensions.sql.impl.BeamSqlEnv;
 import org.apache.beam.sdk.extensions.sql.impl.rel.BeamLogicalConvention;
 import org.apache.beam.sdk.extensions.sql.impl.rel.BeamRelNode;
 import org.apache.beam.sdk.extensions.sql.impl.schema.BaseBeamTable;
-import org.apache.beam.sdk.values.BeamRecord;
 import org.apache.beam.sdk.values.PCollection;
 import org.apache.beam.sdk.values.PCollectionTuple;
+import org.apache.beam.sdk.values.Row;
 import org.apache.calcite.adapter.java.JavaTypeFactory;
 import org.apache.calcite.config.Lex;
 import org.apache.calcite.jdbc.CalciteSchema;
@@ -74,7 +74,7 @@ public class BeamQueryPlanner {
   public static final JavaTypeFactory TYPE_FACTORY = new JavaTypeFactoryImpl(
       RelDataTypeSystem.DEFAULT);
 
-  public BeamQueryPlanner(SchemaPlus schema) {
+  public BeamQueryPlanner(BeamSqlEnv sqlEnv, SchemaPlus schema) {
     String defaultCharsetKey = "saffron.default.charset";
     if (System.getProperty(defaultCharsetKey) == null) {
       System.setProperty(defaultCharsetKey, ConversionUtil.NATIVE_UTF16_CHARSET_NAME);
@@ -92,14 +92,19 @@ public class BeamQueryPlanner {
     sqlOperatorTables.add(SqlStdOperatorTable.instance());
     sqlOperatorTables.add(
         new CalciteCatalogReader(
-            CalciteSchema.from(schema), false, Collections.emptyList(), TYPE_FACTORY));
+            CalciteSchema.from(schema), Collections.emptyList(), TYPE_FACTORY, null));
 
-    FrameworkConfig config = Frameworks.newConfigBuilder()
-        .parserConfig(SqlParser.configBuilder().setLex(Lex.MYSQL).build()).defaultSchema(schema)
-        .traitDefs(traitDefs).context(Contexts.EMPTY_CONTEXT).ruleSets(BeamRuleSets.getRuleSets())
-        .costFactory(null).typeSystem(BeamRelDataTypeSystem.BEAM_REL_DATATYPE_SYSTEM)
-        .operatorTable(new ChainedSqlOperatorTable(sqlOperatorTables))
-        .build();
+    FrameworkConfig config =
+        Frameworks.newConfigBuilder()
+            .parserConfig(SqlParser.configBuilder().setLex(Lex.MYSQL).build())
+            .defaultSchema(schema)
+            .traitDefs(traitDefs)
+            .context(Contexts.EMPTY_CONTEXT)
+            .ruleSets(BeamRuleSets.getRuleSets(sqlEnv))
+            .costFactory(null)
+            .typeSystem(BeamRelDataTypeSystem.BEAM_REL_DATATYPE_SYSTEM)
+            .operatorTable(new ChainedSqlOperatorTable(sqlOperatorTables))
+            .build();
     this.planner = Frameworks.getPlanner(config);
 
     for (String t : schema.getTableNames()) {
@@ -119,12 +124,12 @@ public class BeamQueryPlanner {
    * which is linked with the given {@code pipeline}. The final output stream is returned as
    * {@code PCollection} so more operations can be applied.
    */
-  public PCollection<BeamRecord> compileBeamPipeline(String sqlStatement, Pipeline basePipeline
+  public PCollection<Row> compileBeamPipeline(String sqlStatement, Pipeline basePipeline
       , BeamSqlEnv sqlEnv) throws Exception {
     BeamRelNode relNode = convertToBeamRel(sqlStatement);
 
     // the input PCollectionTuple is empty, and be rebuilt in BeamIOSourceRel.
-    return relNode.buildBeamPipeline(PCollectionTuple.empty(basePipeline), sqlEnv);
+    return PCollectionTuple.empty(basePipeline).apply(relNode.toPTransform());
   }
 
   /**

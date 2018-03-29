@@ -37,6 +37,7 @@ from apache_beam.internal.gcp import json_value
 from apache_beam.options.pipeline_options import SetupOptions
 from apache_beam.options.pipeline_options import StandardOptions
 from apache_beam.options.pipeline_options import TestOptions
+from apache_beam.portability import common_urns
 from apache_beam.pvalue import AsSideInput
 from apache_beam.runners.dataflow.dataflow_metrics import DataflowMetrics
 from apache_beam.runners.dataflow.internal import names
@@ -280,7 +281,8 @@ class DataflowRunner(PipelineRunner):
           'please install apache_beam[gcp]')
 
     # Snapshot the pipeline in a portable proto before mutating it
-    proto_pipeline = pipeline.to_runner_api()
+    proto_pipeline, self.proto_context = pipeline.to_runner_api(
+        return_context=True)
 
     # Performing configured PTransform overrides.
     pipeline.replace_all(DataflowRunner._PTRANSFORM_OVERRIDES)
@@ -575,8 +577,17 @@ class DataflowRunner(PipelineRunner):
             if transform_node.side_inputs else ''),
         transform_node,
         transform_node.transform.output_tags)
-    fn_data = self._pardo_fn_data(transform_node, lookup_label)
-    step.add_property(PropertyNames.SERIALIZED_FN, pickler.dumps(fn_data))
+    # Import here to avoid adding the dependency for local running scenarios.
+    # pylint: disable=wrong-import-order, wrong-import-position
+    from apache_beam.runners.dataflow.internal import apiclient
+    transform_proto = self.proto_context.transforms.get_proto(transform_node)
+    if (apiclient._use_fnapi(transform_node.inputs[0].pipeline._options)
+        and transform_proto.spec.urn == common_urns.PARDO_TRANSFORM):
+      serialized_data = self.proto_context.transforms.get_id(transform_node)
+    else:
+      serialized_data = pickler.dumps(
+          self._pardo_fn_data(transform_node, lookup_label))
+    step.add_property(PropertyNames.SERIALIZED_FN, serialized_data)
     step.add_property(
         PropertyNames.PARALLEL_INPUT,
         {'@type': 'OutputReference',
@@ -731,7 +742,7 @@ class DataflowRunner(PipelineRunner):
       standard_options = (
           transform_node.inputs[0].pipeline.options.view_as(StandardOptions))
       if not standard_options.streaming:
-        raise ValueError('PubSubPayloadSource is currently available for use '
+        raise ValueError('Cloud Pub/Sub is currently available for use '
                          'only in streaming pipelines.')
       # Only one of topic or subscription should be set.
       if transform.source.full_subscription:
@@ -743,6 +754,13 @@ class DataflowRunner(PipelineRunner):
       if transform.source.id_label:
         step.add_property(PropertyNames.PUBSUB_ID_LABEL,
                           transform.source.id_label)
+      if transform.source.with_attributes:
+        # Setting this property signals Dataflow runner to return full
+        # PubsubMessages instead of just the payload.
+        step.add_property(PropertyNames.PUBSUB_SERIALIZED_ATTRIBUTES_FN, '')
+      if transform.source.timestamp_attribute is not None:
+        step.add_property(PropertyNames.PUBSUB_TIMESTAMP_ATTRIBUTE,
+                          transform.source.timestamp_attribute)
     else:
       raise ValueError(
           'Source %r has unexpected format %s.' % (
@@ -898,7 +916,7 @@ class DataflowPipelineResult(PipelineResult):
   def _update_job(self):
     # We need the job id to be able to update job information. There is no need
     # to update the job if we are in a known terminal state.
-    if self.has_job and not self._is_in_terminal_state():
+    if self.has_job and not self.is_in_terminal_state():
       self._job = self._runner.dataflow_client.get_job(self.job_id())
 
   def job_id(self):
@@ -944,7 +962,7 @@ class DataflowPipelineResult(PipelineResult):
     return (api_jobstate_map[self._job.currentState] if self._job.currentState
             else PipelineState.UNKNOWN)
 
-  def _is_in_terminal_state(self):
+  def is_in_terminal_state(self):
     if not self.has_job:
       return True
 
@@ -955,7 +973,7 @@ class DataflowPipelineResult(PipelineResult):
         values_enum.JOB_STATE_UPDATED, values_enum.JOB_STATE_DRAINED]
 
   def wait_until_finish(self, duration=None):
-    if not self._is_in_terminal_state():
+    if not self.is_in_terminal_state():
       if not self.has_job:
         raise IOError('Failed to get the Dataflow job id.')
 
@@ -972,8 +990,8 @@ class DataflowPipelineResult(PipelineResult):
         time.sleep(5.0)
 
       # TODO: Merge the termination code in poll_for_job_completion and
-      # _is_in_terminal_state.
-      terminated = self._is_in_terminal_state()
+      # is_in_terminal_state.
+      terminated = self.is_in_terminal_state()
       assert duration or terminated, (
           'Job did not reach to a terminal state after waiting indefinitely.')
 
@@ -991,7 +1009,7 @@ class DataflowPipelineResult(PipelineResult):
 
     self._update_job()
 
-    if self._is_in_terminal_state():
+    if self.is_in_terminal_state():
       logging.warning(
           'Cancel failed because job %s is already terminated in state %s.',
           self.job_id(), self.state)

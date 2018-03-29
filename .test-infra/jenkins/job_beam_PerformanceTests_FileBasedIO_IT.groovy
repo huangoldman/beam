@@ -26,6 +26,9 @@ def testsConfigurations = [
                 bqTable           : 'beam_performance.textioit_pkb_results',
                 prCommitStatusName: 'Java TextIO Performance Test',
                 prTriggerPhase    : 'Run Java TextIO Performance Test',
+                extraPipelineArgs: [
+                        numberOfRecords: '1000000'
+                ]
 
         ],
         [
@@ -36,6 +39,7 @@ def testsConfigurations = [
                 prCommitStatusName : 'Java CompressedTextIO Performance Test',
                 prTriggerPhase     : 'Run Java CompressedTextIO Performance Test',
                 extraPipelineArgs: [
+                        numberOfRecords: '1000000',
                         compressionType: 'GZIP'
                 ]
         ],
@@ -46,6 +50,9 @@ def testsConfigurations = [
                 bqTable           : 'beam_performance.avroioit_pkb_results',
                 prCommitStatusName: 'Java AvroIO Performance Test',
                 prTriggerPhase    : 'Run Java AvroIO Performance Test',
+                extraPipelineArgs: [
+                        numberOfRecords: '1000000'
+                ]
         ],
         [
                 jobName           : 'beam_PerformanceTests_TFRecordIOIT',
@@ -54,7 +61,22 @@ def testsConfigurations = [
                 bqTable           : 'beam_performance.tfrecordioit_pkb_results',
                 prCommitStatusName: 'Java TFRecordIO Performance Test',
                 prTriggerPhase    : 'Run Java TFRecordIO Performance Test',
+                extraPipelineArgs: [
+                        numberOfRecords: '1000000'
+                ]
         ],
+        [
+                jobName           : 'beam_PerformanceTests_XmlIOIT',
+                jobDescription    : 'Runs PerfKit tests for beam_PerformanceTests_XmlIOIT',
+                itClass           : 'org.apache.beam.sdk.io.xml.XmlIOIT',
+                bqTable           : 'beam_performance.xmlioit_pkb_results',
+                prCommitStatusName: 'Java XmlIOPerformance Test',
+                prTriggerPhase    : 'Run Java XmlIO Performance Test',
+                extraPipelineArgs: [
+                        numberOfRecords: '100000000',
+                        charset: 'UTF-8'
+                ]
+        ]
 ]
 
 for (testConfiguration in testsConfigurations) {
@@ -86,21 +108,14 @@ private void create_filebasedio_performance_test_job(testConfiguration) {
                 'commits@beam.apache.org',
                 false)
 
-        def pipelineArgs = [
+        def pipelineOptions = [
                 project        : 'apache-beam-testing',
                 tempRoot       : 'gs://temp-storage-for-perf-tests',
-                numberOfRecords: '1000000',
                 filenamePrefix : "gs://temp-storage-for-perf-tests/${testConfiguration.jobName}/\${BUILD_ID}/",
         ]
         if (testConfiguration.containsKey('extraPipelineArgs')) {
-            pipelineArgs << testConfiguration.extraPipelineArgs
+            pipelineOptions << testConfiguration.extraPipelineArgs
         }
-
-        def pipelineArgList = []
-        pipelineArgs.each({
-            key, value -> pipelineArgList.add("\"--$key=$value\"")
-        })
-        def pipelineArgsJoined = "[" + pipelineArgList.join(',') + "]"
 
         def argMap = [
                 benchmarks               : 'beam_integration_benchmark',
@@ -110,7 +125,7 @@ private void create_filebasedio_performance_test_job(testConfiguration) {
                 beam_sdk                 : 'java',
                 beam_it_module           : 'sdks/java/io/file-based-io-tests',
                 beam_it_class            : testConfiguration.itClass,
-                beam_it_options          : pipelineArgsJoined,
+                beam_it_options          : common_job_properties.joinPipelineOptions(pipelineOptions),
                 beam_extra_mvn_properties: '["filesystem=gcs"]',
                 bigquery_table           : testConfiguration.bqTable,
         ]

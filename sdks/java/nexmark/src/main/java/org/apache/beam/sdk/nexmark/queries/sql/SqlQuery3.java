@@ -19,23 +19,25 @@ package org.apache.beam.sdk.nexmark.queries.sql;
 
 import static org.apache.beam.sdk.nexmark.model.sql.adapter.ModelAdaptersMapping.ADAPTERS;
 
-import org.apache.beam.sdk.coders.BeamRecordCoder;
-import org.apache.beam.sdk.extensions.sql.BeamRecordSqlType;
+import org.apache.beam.sdk.coders.RowCoder;
 import org.apache.beam.sdk.extensions.sql.BeamSql;
+import org.apache.beam.sdk.extensions.sql.RowSqlType;
 import org.apache.beam.sdk.nexmark.NexmarkConfiguration;
 import org.apache.beam.sdk.nexmark.model.Auction;
 import org.apache.beam.sdk.nexmark.model.Event;
+import org.apache.beam.sdk.nexmark.model.NameCityStateId;
 import org.apache.beam.sdk.nexmark.model.Person;
-import org.apache.beam.sdk.nexmark.model.sql.ToBeamRecord;
+import org.apache.beam.sdk.nexmark.model.sql.ToRow;
 import org.apache.beam.sdk.nexmark.queries.Query3;
 import org.apache.beam.sdk.transforms.Filter;
 import org.apache.beam.sdk.transforms.PTransform;
+import org.apache.beam.sdk.transforms.ParDo;
 import org.apache.beam.sdk.transforms.SerializableFunction;
 import org.apache.beam.sdk.transforms.windowing.FixedWindows;
 import org.apache.beam.sdk.transforms.windowing.Window;
-import org.apache.beam.sdk.values.BeamRecord;
 import org.apache.beam.sdk.values.PCollection;
 import org.apache.beam.sdk.values.PCollectionTuple;
+import org.apache.beam.sdk.values.Row;
 import org.apache.beam.sdk.values.TupleTag;
 import org.joda.time.Duration;
 
@@ -69,7 +71,7 @@ import org.joda.time.Duration;
  *
  * <p>Correct join semantics implementation is tracked in BEAM-3190, BEAM-3191
  */
-public class SqlQuery3 extends PTransform<PCollection<Event>, PCollection<BeamRecord>> {
+public class SqlQuery3 extends PTransform<PCollection<Event>, PCollection<NameCityStateId>> {
 
   private static final String QUERY_NAME = SqlQuery3.class.getSimpleName();
 
@@ -82,7 +84,7 @@ public class SqlQuery3 extends PTransform<PCollection<Event>, PCollection<BeamRe
       + "    A.category = 10 "
       + "    AND (P.state = 'OR' OR P.state = 'ID' OR P.state = 'CA')";
 
-  private static final BeamRecordCoder OUTPUT_RECORD_CODER = createOutputRecordCoder();
+  private static final RowCoder RECORD_CODER = createRecordCoder();
   private NexmarkConfiguration configuration;
 
   public SqlQuery3(NexmarkConfiguration configuration) {
@@ -91,15 +93,22 @@ public class SqlQuery3 extends PTransform<PCollection<Event>, PCollection<BeamRe
   }
 
   @Override
-  public PCollection<BeamRecord> expand(PCollection<Event> allEvents) {
+  public PCollection<NameCityStateId> expand(PCollection<Event> allEvents) {
     PCollection<Event> windowed = fixedWindows(allEvents);
 
-    PCollection<BeamRecord> auctions = filter(windowed, e -> e.newAuction != null, Auction.class);
-    PCollection<BeamRecord> people = filter(windowed, e -> e.newPerson != null, Person.class);
+    PCollection<Row> auctions = filter(windowed, e -> e.newAuction != null, Auction.class);
+    PCollection<Row> people = filter(windowed, e -> e.newPerson != null, Person.class);
 
     PCollectionTuple inputStreams = createStreamsTuple(auctions, people);
 
-    return inputStreams.apply(BeamSql.queryMulti(QUERY_STRING)).setCoder(OUTPUT_RECORD_CODER);
+    PCollection<Row> queryResultsRows =
+        inputStreams
+            .apply(BeamSql.query(QUERY_STRING))
+            .setCoder(RECORD_CODER);
+
+    return queryResultsRows
+        .apply(nameCityStateIdParDo())
+        .setCoder(NameCityStateId.CODER);
   }
 
   private PCollection<Event> fixedWindows(PCollection<Event> events) {
@@ -110,15 +119,15 @@ public class SqlQuery3 extends PTransform<PCollection<Event>, PCollection<BeamRe
   }
 
   private PCollectionTuple createStreamsTuple(
-      PCollection<BeamRecord> auctions,
-      PCollection<BeamRecord> people) {
+      PCollection<Row> auctions,
+      PCollection<Row> people) {
 
     return PCollectionTuple
         .of(new TupleTag<>("Auction"), auctions)
         .and(new TupleTag<>("Person"), people);
   }
 
-  private PCollection<BeamRecord> filter(
+  private PCollection<Row> filter(
       PCollection<Event> allEvents,
       SerializableFunction<Event, Boolean> filter,
       Class clazz) {
@@ -127,23 +136,27 @@ public class SqlQuery3 extends PTransform<PCollection<Event>, PCollection<BeamRe
 
     return allEvents
         .apply(QUERY_NAME + ".Filter." + modelName, Filter.by(filter))
-        .apply(QUERY_NAME + ".ToRecords." + modelName, ToBeamRecord.parDo())
+        .apply(QUERY_NAME + ".ToRecords." + modelName, ToRow.parDo())
         .setCoder(getRecordCoder(clazz));
   }
 
-  private BeamRecordCoder getRecordCoder(Class modelClass) {
-    return ADAPTERS.get(modelClass).getRecordType().getRecordCoder();
+  private RowCoder getRecordCoder(Class modelClass) {
+    return ADAPTERS.get(modelClass).getRowType().getRowCoder();
   }
 
-  private static BeamRecordCoder createOutputRecordCoder() {
+  private static RowCoder createRecordCoder() {
     return
-        BeamRecordSqlType
+        RowSqlType
             .builder()
             .withVarcharField("name")
             .withVarcharField("city")
             .withVarcharField("state")
             .withBigIntField("id")
             .build()
-            .getRecordCoder();
+            .getRowCoder();
+  }
+
+  private ParDo.SingleOutput<Row, NameCityStateId> nameCityStateIdParDo() {
+    return ADAPTERS.get(NameCityStateId.class).parDo();
   }
 }

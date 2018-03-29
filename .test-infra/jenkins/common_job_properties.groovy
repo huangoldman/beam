@@ -208,6 +208,13 @@ class common_job_properties {
       '--none--')
   }
 
+  // Sets this as a cron job, running on a schedule.
+  static void setCronJob(context, String buildSchedule) {
+    context.triggers {
+      cron(buildSchedule)
+    }
+  }
+
   // Sets common config for PostCommit jobs.
   static void setPostCommit(context,
                             String buildSchedule = '0 */6 * * *',
@@ -253,6 +260,31 @@ class common_job_properties {
     // Note: in case of key collision, keys present in ArgMap win.
     LinkedHashMap<String, String> joinedArgs = standardArgs.plus(argMap)
     return mapToArgString(joinedArgs)
+  }
+
+  static def setupKubernetes(def context, def namespace, def kubeconfigLocation) {
+    context.steps {
+      shell('gcloud container clusters get-credentials io-datastores --zone=us-central1-a --verbosity=debug')
+      shell("cp /home/jenkins/.kube/config ${kubeconfigLocation}")
+
+      shell("kubectl --kubeconfig=${kubeconfigLocation} create namespace ${namespace}")
+      shell("kubectl --kubeconfig=${kubeconfigLocation} config set-context \$(kubectl config current-context) --namespace=${namespace}")
+    }
+  }
+
+  static def cleanupKubernetes(def context, def namespace, def kubeconfigLocation) {
+    context.steps {
+      shell("kubectl --kubeconfig=${kubeconfigLocation} delete namespace ${namespace}")
+      shell("rm ${kubeconfigLocation}")
+    }
+  }
+
+  static String getKubernetesNamespace(def testName) {
+    return "${testName}-${new Date().getTime()}"
+  }
+
+  static String getKubeconfigLocationForNamespace(def namespace) {
+    return '"$WORKSPACE/' + "config-${namespace}" + '"'
   }
 
   // Adds the standard performance test job steps.
@@ -380,5 +412,28 @@ class common_job_properties {
         }
       }
     }
+  }
+
+  /**
+   * Transforms pipeline options to a string of format like below:
+   * ["--pipelineOption=123", "--pipelineOption2=abc", ...]
+   *
+   * @param pipelineOptions A map of pipeline options.
+   */
+  static String joinPipelineOptions(Map pipelineOptions) {
+    List<String> pipelineArgList = []
+    pipelineOptions.each({
+      key, value -> pipelineArgList.add("\"--$key=$value\"")
+    })
+    return "[" + pipelineArgList.join(',') + "]"
+  }
+
+
+  /**
+   * Returns absolute path to beam project's files.
+   * @param path A relative path to project resource.
+   */
+  static String makePathAbsolute(String path) {
+    return '"$WORKSPACE/' + path + '"'
   }
 }

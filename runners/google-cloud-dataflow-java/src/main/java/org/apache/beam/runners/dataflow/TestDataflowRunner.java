@@ -17,6 +17,7 @@
  */
 package org.apache.beam.runners.dataflow;
 
+import static org.apache.beam.sdk.options.ExperimentalOptions.hasExperiment;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 import com.google.api.services.dataflow.model.JobMessage;
@@ -180,7 +181,7 @@ public class TestDataflowRunner extends PipelineRunner<DataflowPipelineJob> {
   }
 
   /**
-   * Return {@code true} if the job succeeded or {@code false} if it terminated in any other manner.
+   * Return {@code true} if job state is {@code State.DONE}. {@code false} otherwise.
    */
   private boolean waitForBatchJobTermination(
       DataflowPipelineJob job, ErrorMonitorMessagesHandler messageHandler) {
@@ -194,7 +195,7 @@ public class TestDataflowRunner extends PipelineRunner<DataflowPipelineJob> {
         return false;
       }
 
-      return job.getState() == State.DONE && !messageHandler.hasSeenError();
+      return job.getState() == State.DONE;
     }
   }
 
@@ -209,7 +210,7 @@ public class TestDataflowRunner extends PipelineRunner<DataflowPipelineJob> {
 
   @VisibleForTesting
   void updatePAssertCount(Pipeline pipeline) {
-    if (DataflowRunner.hasExperiment(options, "beam_fn_api")) {
+    if (hasExperiment(options, "beam_fn_api")) {
       // TODO[BEAM-1866]: FnAPI does not support metrics, so expect 0 assertions.
       expectedNumberOfAssertions = 0;
     } else {

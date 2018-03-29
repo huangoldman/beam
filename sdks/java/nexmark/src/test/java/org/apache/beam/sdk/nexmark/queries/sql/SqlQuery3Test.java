@@ -20,16 +20,14 @@ package org.apache.beam.sdk.nexmark.queries.sql;
 
 import com.google.common.collect.ImmutableList;
 import java.util.List;
-import org.apache.beam.sdk.extensions.sql.BeamRecordSqlType;
 import org.apache.beam.sdk.nexmark.NexmarkConfiguration;
 import org.apache.beam.sdk.nexmark.model.Auction;
 import org.apache.beam.sdk.nexmark.model.Event;
+import org.apache.beam.sdk.nexmark.model.NameCityStateId;
 import org.apache.beam.sdk.nexmark.model.Person;
 import org.apache.beam.sdk.testing.PAssert;
 import org.apache.beam.sdk.testing.TestPipeline;
 import org.apache.beam.sdk.transforms.Create;
-import org.apache.beam.sdk.values.BeamRecord;
-import org.apache.beam.sdk.values.BeamRecordType;
 import org.apache.beam.sdk.values.PBegin;
 import org.apache.beam.sdk.values.PCollection;
 import org.junit.Rule;
@@ -39,15 +37,6 @@ import org.junit.Test;
  * Unit tests for {@link SqlQuery3}.
  */
 public class SqlQuery3Test {
-
-  private static final BeamRecordType RESULT_RECORD_TYPE =
-      BeamRecordSqlType
-          .builder()
-          .withVarcharField("name")
-          .withVarcharField("city")
-          .withVarcharField("state")
-          .withBigIntField("id")
-          .build();
 
   private static final List<Person> PEOPLE = ImmutableList.of(
       newPerson(0L, "WA"),
@@ -86,11 +75,11 @@ public class SqlQuery3Test {
       new Event(AUCTIONS.get(8)),
       new Event(AUCTIONS.get(9)));
 
-  public static final List<BeamRecord> RESULTS = ImmutableList.of(
-      newResultRecord("name_1", "city_1", "CA", 1L),
-      newResultRecord("name_3", "city_3", "ID", 3L),
-      newResultRecord("name_1", "city_1", "CA", 6L),
-      newResultRecord("name_3", "city_3", "ID", 8L));
+  public static final List<NameCityStateId> RESULTS = ImmutableList.of(
+      new NameCityStateId("name_1", "city_1", "CA", 1L),
+      new NameCityStateId("name_3", "city_3", "ID", 3L),
+      new NameCityStateId("name_1", "city_1", "CA", 6L),
+      new NameCityStateId("name_3", "city_3", "ID", 8L));
 
   @Rule public TestPipeline testPipeline = TestPipeline.create();
 
@@ -132,22 +121,5 @@ public class SqlQuery3Test {
       seller,
       category,
       "extra_" + id);
-  }
-
-  private static BeamRecord newResultRecord(
-      String personName,
-      String personCity,
-      String personState,
-      long auctionId) {
-
-    return
-        BeamRecord
-            .withRecordType(RESULT_RECORD_TYPE)
-            .addValues(
-                personName,
-                personCity,
-                personState,
-                auctionId)
-            .build();
   }
 }

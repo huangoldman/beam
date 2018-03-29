@@ -52,6 +52,7 @@ excluded_patterns=(
     apache_beam/runners/dataflow/internal/
     apache_beam/runners/portability/
     apache_beam/runners/worker/
+    apache_beam/tools/map_fn_microbenchmark.*
     apache_beam/transforms/cy_combiners.*
     apache_beam/utils/counters.*
     apache_beam/utils/windowed_value.*
@@ -100,7 +101,6 @@ import apache_beam as beam
 intersphinx_mapping = {
   'python': ('https://docs.python.org/2', None),
   'hamcrest': ('https://pyhamcrest.readthedocs.io/en/latest/', None),
-  'hdfs3': ('https://hdfs3.readthedocs.io/en/latest/', None),
 }
 
 # Since private classes are skipped by sphinx, if there is any cross reference

@@ -25,7 +25,7 @@ import org.apache.beam.model.pipeline.v1.RunnerApi.PTransform;
 /**
  * A graph node which contains some pipeline element.
  */
-interface PipelineNode {
+public interface PipelineNode {
   static PTransformNode pTransform(String id, PTransform transform) {
     return new AutoValue_PipelineNode_PTransformNode(id, transform);
   }
@@ -33,6 +33,8 @@ interface PipelineNode {
   static PCollectionNode pCollection(String id, PCollection collection) {
     return new AutoValue_PipelineNode_PCollectionNode(id, collection);
   }
+
+  String getId();
 
   /**
    * A {@link PipelineNode} which contains a {@link PCollection}.
@@ -42,7 +44,6 @@ interface PipelineNode {
     public abstract String getId();
     public abstract PCollection getPCollection();
   }
-
 
   /**
    * A {@link PipelineNode} which contains a {@link PTransform}.

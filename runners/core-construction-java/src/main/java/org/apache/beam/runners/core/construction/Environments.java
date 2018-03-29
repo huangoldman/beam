@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.Optional;
 import javax.annotation.Nullable;
 import org.apache.beam.model.pipeline.v1.RunnerApi.CombinePayload;
+import org.apache.beam.model.pipeline.v1.RunnerApi.Components;
 import org.apache.beam.model.pipeline.v1.RunnerApi.Environment;
 import org.apache.beam.model.pipeline.v1.RunnerApi.PTransform;
 import org.apache.beam.model.pipeline.v1.RunnerApi.ParDoPayload;
@@ -42,7 +43,7 @@ public class Environments {
           .put(PTransformTranslation.COMBINE_TRANSFORM_URN, Environments::combineExtractor)
           .put(PTransformTranslation.PAR_DO_TRANSFORM_URN, Environments::parDoExtractor)
           .put(PTransformTranslation.READ_TRANSFORM_URN, Environments::readExtractor)
-          .put(PTransformTranslation.WINDOW_TRANSFORM_URN, Environments::windowExtractor)
+          .put(PTransformTranslation.ASSIGN_WINDOWS_TRANSFORM_URN, Environments::windowExtractor)
           .build();
 
   private static final EnvironmentIdExtractor DEFAULT_SPEC_EXTRACTOR = (transform) -> null;
@@ -55,6 +56,27 @@ public class Environments {
       Environment.newBuilder().setUrl(JAVA_SDK_HARNESS_CONTAINER_URL).build();
 
   private Environments() {}
+
+  public static Optional<Environment> getEnvironment(
+      String ptransformId, Components components) {
+    try {
+      PTransform ptransform = components.getTransformsOrThrow(ptransformId);
+      String envId =
+          KNOWN_URN_SPEC_EXTRACTORS
+              .getOrDefault(ptransform.getSpec().getUrn(), DEFAULT_SPEC_EXTRACTOR)
+              .getEnvironmentId(ptransform);
+      if (Strings.isNullOrEmpty(envId)) {
+        // Some PTransform payloads may have an unspecified (empty) Environment ID, for example a
+        // WindowIntoPayload with a known WindowFn. Others will never have an Environment ID, such
+        // as a GroupByKeyPayload, and the Default extractor returns null in this case.
+        return Optional.empty();
+      } else {
+        return Optional.of(components.getEnvironmentsOrThrow(envId));
+      }
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+  }
 
   public static Optional<Environment> getEnvironment(
       PTransform ptransform, RehydratedComponents components) {

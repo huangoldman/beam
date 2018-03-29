@@ -22,13 +22,13 @@ import java.util.Date;
 import java.util.GregorianCalendar;
 import java.util.List;
 import org.apache.beam.sdk.transforms.windowing.BoundedWindow;
-import org.apache.beam.sdk.values.BeamRecord;
+import org.apache.beam.sdk.values.Row;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.NlsString;
 
 /**
  * {@link BeamSqlPrimitive} is a special, self-reference {@link BeamSqlExpression}.
- * It holds the value, and return it directly during {@link #evaluate(BeamRecord, BoundedWindow)}.
+ * It holds the value, and return it directly during {@link #evaluate(Row, BoundedWindow)}.
  *
  */
 public class BeamSqlPrimitive<T> extends BeamSqlExpression {
@@ -44,7 +44,7 @@ public class BeamSqlPrimitive<T> extends BeamSqlExpression {
   /**
    * A builder function to create from Type and value directly.
    */
-  public static <T> BeamSqlPrimitive<T> of(SqlTypeName outputType, T value){
+  public static <T> BeamSqlPrimitive<T> of(SqlTypeName outputType, T value) {
     BeamSqlPrimitive<T> exp = new BeamSqlPrimitive<>();
     exp.outputType = outputType;
     exp.value = value;
@@ -143,13 +143,18 @@ public class BeamSqlPrimitive<T> extends BeamSqlExpression {
     case SYMBOL:
       // for SYMBOL, it supports anything...
       return true;
+    case ARRAY:
+      return value instanceof List;
+    case ROW:
+      return value instanceof Row;
     default:
-      throw new UnsupportedOperationException(outputType.name());
+      throw new UnsupportedOperationException(
+          "Unsupported Beam SQL type in expression: " + outputType.name());
     }
   }
 
   @Override
-  public BeamSqlPrimitive<T> evaluate(BeamRecord inputRow, BoundedWindow window) {
+  public BeamSqlPrimitive<T> evaluate(Row inputRow, BoundedWindow window) {
     return this;
   }
 

@@ -29,6 +29,7 @@ import org.apache.beam.sdk.coders.SerializableCoder;
 import org.apache.beam.sdk.transforms.Combine;
 import org.apache.beam.sdk.transforms.SerializableFunction;
 import org.apache.beam.sdk.values.KV;
+import org.apache.calcite.runtime.SqlFunctions;
 
 /**
  * {@link Combine.CombineFn} for <em>Covariance</em> on {@link Number} types.
@@ -65,7 +66,7 @@ public class CovarianceFn<T extends Number>
         return new CovarianceFn<>(SAMPLE, decimalConverter);
     }
 
-    private CovarianceFn(boolean isSample, SerializableFunction<BigDecimal, T> decimalConverter){
+    private CovarianceFn(boolean isSample, SerializableFunction<BigDecimal, T> decimalConverter) {
         this.isSample = isSample;
         this.decimalConverter = decimalConverter;
     }
@@ -83,7 +84,8 @@ public class CovarianceFn<T extends Number>
         }
 
         return currentVariance.combineWith(CovarianceAccumulator.ofSingleElement(
-                toBigDecimal(rawInput.getKey()), toBigDecimal(rawInput.getValue())));
+                SqlFunctions.toBigDecimal(rawInput.getKey()),
+                SqlFunctions.toBigDecimal(rawInput.getValue())));
     }
 
     @Override
@@ -112,9 +114,5 @@ public class CovarianceFn<T extends Number>
                 : covariance.count();
 
         return covariance.covariance().divide(adjustedCount, MATH_CTX);
-    }
-
-    private BigDecimal toBigDecimal(T rawInput) {
-        return new BigDecimal(rawInput.toString());
     }
 }
